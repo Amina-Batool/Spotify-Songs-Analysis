@@ -1,0 +1,114 @@
+{
+    "initial_columns": [
+        "spotify_id",
+        "name",
+        "artists",
+        "daily_rank",
+        "daily_movement",
+        "weekly_movement",
+        "country",
+        "snapshot_date",
+        "popularity",
+        "is_explicit",
+        "duration_ms",
+        "album_name",
+        "album_release_date",
+        "danceability",
+        "energy",
+        "key",
+        "loudness",
+        "mode",
+        "speechiness",
+        "acousticness",
+        "instrumentalness",
+        "liveness",
+        "valence",
+        "tempo",
+        "time_signature"
+    ],
+    "initial_dtypes": {
+        "spotify_id": "object",
+        "name": "object",
+        "artists": "object",
+        "daily_rank": "int64",
+        "daily_movement": "int64",
+        "weekly_movement": "int64",
+        "country": "object",
+        "snapshot_date": "int64",
+        "popularity": "int64",
+        "is_explicit": "bool",
+        "duration_ms": "int64",
+        "album_name": "object",
+        "album_release_date": "int64",
+        "danceability": "float64",
+        "energy": "float64",
+        "key": "int64",
+        "loudness": "float64",
+        "mode": "int64",
+        "speechiness": "float64",
+        "acousticness": "float64",
+        "instrumentalness": "float64",
+        "liveness": "float64",
+        "valence": "float64",
+        "tempo": "float64",
+        "time_signature": "int64"
+    },
+    "categorical_columns": {
+        "duration_category": [
+            "Medium",
+            "Short",
+            "Long"
+        ],
+        "age_category": [
+            "Recent",
+            "Old",
+            "New"
+        ],
+        "season_released": [
+            "Spring",
+            "Fall",
+            "Winter",
+            "Summer"
+        ]
+    },
+    "encoded_columns": {
+        "duration_category": {
+            "original": [
+                "Long",
+                "Medium",
+                "Short"
+            ],
+            "encoded": [
+                0,
+                1,
+                2
+            ]
+        },
+        "age_category": {
+            "original": [
+                "New",
+                "Old",
+                "Recent"
+            ],
+            "encoded": [
+                0,
+                1,
+                2
+            ]
+        },
+        "season_released": {
+            "original": [
+                "Fall",
+                "Spring",
+                "Summer",
+                "Winter"
+            ],
+            "encoded_columns": [
+                "season_Fall",
+                "season_Spring",
+                "season_Summer",
+                "season_Winter"
+            ]
+        }
+    }
+}
