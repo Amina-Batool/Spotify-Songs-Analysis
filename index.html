@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Spotify Analytics Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.22.5/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7.8.5/dist/d3.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .bg-darkest { background-color: #121030; }
+    .bg-darker { background-color: #040124; }
+    .bg-dark { background-color: #0e1c36; }
+    .bg-card { background-color: #152f57; }
+    .text-light { color: #e0e0e0; }
+    .text-lighter { color: #ffffff; }
+    .text-accent-blue { color: #5dade2; }
+    .text-accent-teal { color: #48c9b0; }
+    .text-accent-purple { color: #af7ac5; }
+    .text-accent-orange { color: #f39c12; }
+    .navbar { height: 80px; }
+    .graph-card { transition: all 0.3s ease; height: 100%; display: flex; flex-direction: column; }
+    .graph-card:hover { transform: translateY(-5px); box-shadow: 0 10px 20px rgba(0,0,0,0.3); }
+    .search-bar { background-color: #287bb3; border: 1px solid #444; color: white; }
+    .search-button { background-color: #287bb3; color: white; }
+    .border-accent-blue { border-color: #5dade2; }
+    .border-accent-teal { border-color: #48c9b0; }
+    .border-accent-purple { border-color: #af7ac5; }
+    .border-accent-orange { border-color: #f39c12; }
+    .placeholder-gray { color: #888; }
+    .graph-container { background-color: #1e1e1e; border-radius: 8px; min-height: 420px; padding: 1rem; }
+    pre { white-space: pre-wrap; }
+    .footer { background-color: #0e1c36; padding: 20px; }
+    .footer-graph-container { background-color: #1e1e1e; border-radius: 8px; min-height: 300px; padding: 1rem; }
+  </style>
+</head>
+<body className="bg-darkest text-light" style="background-color: #17223b;">
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const GraphPlaceholder = ({ title, color, img_src, img_alt, if_onClick, if_OnError, desc, isFooter }) => (
+      <div className={`${isFooter ? 'footer-graph-container' : 'graph-container'} border-2 border-${color} flex flex-col items-center justify-center`}>
+        <p className="text-lg font-semibold mb-2">{title}</p>
+        <img
+          src={img_src}
+          alt={img_alt}
+          className={`w-full object-contain cursor-pointer ${isFooter ? 'h-36' : 'h-48'}`}
+          onClick={if_onClick}
+          onError={if_OnError}
+        /><br/>
+        <p className="text-xs placeholder-gray">{desc}</p>
+      </div>
+    );
+
+    const App = () => {
+      const [classificationData, setClassificationData] = useState([]);
+      const [clusteringData, setClusteringData] = useState({});
+      const [dataset, setDataset] = useState([]);
+      const [filteredDataset, setFilteredDataset] = useState([]);
+      const [searchQuery, setSearchQuery] = useState("");
+      const [view, setView] = useState("analytics");
+      const [loading, setLoading] = useState(true);
+      const [itemsPerPage, setItemsPerPage] = useState(20);
+      const [counterfactualExplanation, setCounterfactualExplanation] = useState([]);
+      const [playlistData, setPlaylistData] = useState(null);
+      const [audioFeatures, setAudioFeatures] = useState({});
+      const [timeTrends, setTimeTrends] = useState({});
+      const [anomalyData, setAnomalyData] = useState({});
+      const [dataErrors, setDataErrors] = useState({});
+
+      useEffect(() => {
+        const loadData = async () => {
+          const errors = {};
+          try {
+            // Load dataset.csv
+            try {
+              const datasetResponse = await fetch('dataset.csv');
+              if (!datasetResponse.ok) throw new Error(`HTTP ${datasetResponse.status}`);
+              const datasetText = await datasetResponse.text();
+              Papa.parse(datasetText, {
+                header: true,
+                complete: (result) => {
+                  console.log("Dataset loaded:", result.data.length, "rows");
+                  setDataset(result.data);
+                  setFilteredDataset(result.data);
+                  generatePlaylistData(result.data);
+                },
+              });
+            } catch (e) {
+              errors.dataset = `Failed to load dataset.csv: ${e.message}`;
+              console.error(errors.dataset);
+            }
+
+            // Load classification_results.csv
+            try {
+              const classificationResponse = await fetch('classification_results.csv');
+              if (!classificationResponse.ok) throw new Error(`HTTP ${classificationResponse.status}`);
+              const classificationText = await classificationResponse.text();
+              Papa.parse(classificationText, {
+                header: true,
+                complete: (result) => {
+                  const formattedData = result.data.map(row => ({
+                    Model: row[""] || "Unknown",
+                    Accuracy: parseFloat(row.Accuracy) || 0,
+                    Precision: parseFloat(row.Precision) || 0,
+                    Recall: parseFloat(row.Recall) || 0,
+                    "F1 Score": parseFloat(row["F1 Score"]) || 0,
+                  }));
+                  setClassificationData(formattedData.filter(row => row.Model !== "Unknown"));
+                  console.log("Classification data loaded:", formattedData.length, "models");
+                },
+              });
+            } catch (e) {
+              errors.classification = `Failed to load classification_results.csv: ${e.message}`;
+              console.error(errors.classification);
+            }
+
+            // Load clustering_metrics.json
+            try {
+              const clusteringResponse = await fetch('clustering_metrics.json');
+              if (!clusteringResponse.ok) throw new Error(`HTTP ${clusteringResponse.status}`);
+              const clusteringData = await clusteringResponse.json();
+              setClusteringData(clusteringData);
+              console.log("Clustering metrics loaded:", Object.keys(clusteringData));
+            } catch (e) {
+              errors.clustering = `Failed to load clustering_metrics.json: ${e.message}`;
+              console.error(errors.clustering);
+            }
+
+            // Load counterfactual_explanation.csv
+            try {
+              const cfResponse = await fetch('counterfactual_explanation.csv');
+              if (!cfResponse.ok) throw new Error(`HTTP ${cfResponse.status}`);
+              const cfText = await cfResponse.text();
+              Papa.parse(cfText, {
+                header: true,
+                complete: (result) => {
+                  setCounterfactualExplanation(result.data);
+                  console.log("Counterfactual explanations loaded:", result.data.length, "rows");
+                },
+              });
+            } catch (e) {
+              errors.counterfactual = `Failed to load counterfactual_explanation.csv: ${e.message}`;
+              console.error(errors.counterfactual);
+            }
+
+            // Load audio_features.json
+            try {
+              const audioResponse = await fetch('audio_features.json');
+              if (!audioResponse.ok) throw new Error(`HTTP ${audioResponse.status}`);
+              const audioData = await audioResponse.json();
+              setAudioFeatures(audioData);
+              console.log("Audio features loaded:", Object.keys(audioData));
+            } catch (e) {
+              errors.audio = `Failed to load audio_features.json: ${e.message}`;
+              console.error(errors.audio);
+            }
+
+            // Load time_trends.json
+            try {
+              const timeResponse = await fetch('time_trends.json');
+              if (!timeResponse.ok) throw new Error(`HTTP ${timeResponse.status}`);
+              const timeData = await timeResponse.json();
+              setTimeTrends(timeData);
+              console.log("Time trends loaded:", Object.keys(timeData));
+            } catch (e) {
+              errors.time = `Failed to load time_trends.json: ${e.message}`;
+              console.error(errors.time);
+            }
+
+            // Load anomaly_detection.json
+            try {
+              const anomalyResponse = await fetch('anomaly_detection.json');
+              if (!anomalyResponse.ok) throw new Error(`HTTP ${anomalyResponse.status}`);
+              const anomalyData = await anomalyResponse.json();
+              setAnomalyData(anomalyData);
+              console.log("Anomaly data loaded:", anomalyData.num_outliers, "outliers");
+            } catch (e) {
+              errors.anomaly = `Failed to load anomaly_detection.json: ${e.message}`;
+              console.error(errors.anomaly);
+            }
+          } catch (error) {
+            console.error("Unexpected error loading data:", error);
+          } finally {
+            setDataErrors(errors);
+            setLoading(false);
+            console.log("Data loading complete. Errors:", errors);
+          }
+        };
+
+        loadData();
+      }, []);
+
+      const generatePlaylistData = (data) => {
+        if (data.length === 0) {
+          console.warn("No data available for playlist generation");
+          return;
+        }
+        const uniqueClusters = [...new Set(data.map(row => row.cluster).filter(c => c))];
+        const playlists = {};
+        uniqueClusters.forEach(cluster => {
+          const clusterSongs = data.filter(row => row.cluster == cluster);
+          const avgEnergy = clusterSongs.reduce((sum, song) => sum + (parseFloat(song.energy) || 0), 0) / clusterSongs.length;
+          const avgDanceability = clusterSongs.reduce((sum, song) => sum + (parseFloat(song.danceability) || 0), 0) / clusterSongs.length;
+          const description = avgEnergy > 0.7 ? "High-energy tracks for dancing" :
+                            avgEnergy < 0.4 ? "Calm and relaxing songs" :
+                            avgDanceability > 0.7 ? "Upbeat and danceable tunes" : "Varied mood tracks";
+          playlists[cluster] = {
+            name: `Cluster ${cluster} Playlist`,
+            description,
+            songs: clusterSongs.filter(song => song.name && song.artists)
+                              .map(song => `${song.name} by ${song.artists}`)
+                              .slice(0, 5),
+          };
+        });
+        setPlaylistData(playlists);
+        console.log("Playlists generated:", Object.keys(playlists).length, "clusters");
+      };
+
+      const handleSearch = (e) => {
+        e.preventDefault();
+        const query = searchQuery.toLowerCase();
+        if (!query) {
+          setFilteredDataset(dataset);
+          setItemsPerPage(20);
+          return;
+        }
+        const filtered = dataset.filter((row) =>
+          Object.values(row).some(
+            (val) => val && String(val).toLowerCase().includes(query)
+          )
+        );
+        setFilteredDataset(filtered);
+        setItemsPerPage(20);
+        console.log("Search applied. Results:", filtered.length);
+      };
+
+      const handleLoadMore = () => {
+        setItemsPerPage((prev) => prev + 20);
+        console.log("Loading more items. New limit:", itemsPerPage + 20);
+      };
+
+      const openGraphInNewTab = (src) => {
+        const newWindow = window.open();
+        newWindow.document.write(`
+          <html>
+            <head>
+              <style>
+                body { margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #0f0f0f; }
+                img { max-width: 90%; max-height: 90%; box-shadow: 0 0 20px rgba(0,0,0,0.5); border-radius: 8px; }
+              </style>
+            </head>
+            <body>
+              <img src="${src}" alt="Enlarged Graph" />
+            </body>
+          </html>
+        `);
+        newWindow.document.close();
+        console.log("Opened graph in new tab:", src);
+      };
+
+      if (loading) {
+        return (
+          <div className="flex items-center justify-center h-screen bg-darkest">
+            <div className="text-center">
+              <div className="inline-block animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-accent-blue mb-4"></div>
+              <p className="text-xl text-lighter">Loading Dashboard...</p>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="min-h-screen flex flex-col">
+          <nav className="bg-darker navbar shadow-lg p-4 flex justify-between items-center fixed w-full z-10">
+            <div className="flex items-center space-x-8">
+              <h1 className="text-2xl font-bold text-lighter flex items-center">
+                <svg className="w-6 h-6 mr-2 text-green-500" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.6 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+                </svg>
+                Spotify Analytics Dashboard
+              </h1>
+              <button
+                onClick={() => setView("analytics")}
+                className={`text-lg font-medium px-6 py-2 rounded-lg hover:bg-dark transition-colors ${view === "analytics" ? "bg-dark text-accent-blue" : "text-light"}`}
+              >
+                Analytics
+              </button>
+              <button
+                onClick={() => setView("dataGrid")}
+                className={`text-lg font-medium px-6 py-2 rounded-lg hover:bg-dark transition-colors ${view === "dataGrid" ? "bg-dark text-accent-blue" : "text-light"}`}
+              >
+                Data Explorer
+              </button>
+            </div>
+            <div className="flex items-center space-x-4">
+              <div className="text-sm text-light">
+                {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+              </div>
+              <img
+                src="ai_image.png"
+                className="w-10 h-10 rounded-full"
+                alt="User Avatar"
+                onError={(e) => e.target.src = "https://via.placeholder.com/40?text=Avatar"}
+              />
+            </div>
+          </nav>
+
+          <div className="pt-20 p-6 flex-grow">
+            {view === "analytics" ? (
+              <>
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="text-2xl font-semibold text-lighter"><br></br>Analytics Overview</h2>
+                  <div className="text-sm text-light">
+                    {filteredDataset.length} tracks analyzed | Last updated: {new Date().toLocaleTimeString()}
+                  </div>
+                </div>
+
+                {/* Data Loading Errors */}
+                {Object.keys(dataErrors).length > 0 && (
+                  <div className="mb-8 bg-red-900 p-4 rounded-lg">
+                    <h3 className="text-lg font-semibold text-white mb-2">Data Loading Issues</h3>
+                    <ul className="text-sm text-white list-disc ml-4">
+                      {Object.values(dataErrors).map((error, index) => (
+                        <li key={index}>{error}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Feature Engineering: Audio-Specific Transformations */}
+                <div className="mb-8">
+                  <h2 className="text-2xl font-semibold text-lighter mb-4">Audio Feature Engineering</h2>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="bg-card p-4 rounded-lg shadow-md">
+                      <h3 className="text-lg font-semibold mb-2 text-accent-teal">Mood Score</h3>
+                      <div className="text-sm text-light">
+                        {audioFeatures.mood_score && Object.keys(audioFeatures.mood_score).length > 0 ? (
+                          <>
+                            <p>Mean: {audioFeatures.mood_score.mean.toFixed(2)}</p>
+                            <p>Std: {audioFeatures.mood_score.std.toFixed(2)}</p>
+                            <p>Range: {audioFeatures.mood_score.min.toFixed(2)} - {audioFeatures.mood_score.max.toFixed(2)}</p>
+                            <p className="mt-2 text-xs">Average of valence, energy, and danceability (scaled to 0-100).</p>
+                          </>
+                        ) : (
+                          <p>No data available {dataErrors.audio ? `(${dataErrors.audio})` : ''}</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="bg-card p-4 rounded-lg shadow-md">
+                      <h3 className="text-lg font-semibold mb-2 text-accent-blue">Focus Metric</h3>
+                      <div className="text-sm text-light">
+                        {audioFeatures.focus_metric && Object.keys(audioFeatures.focus_metric).length > 0 ? (
+                          <>
+                            <p>Mean: {audioFeatures.focus_metric.mean.toFixed(4)}</p>
+                            <p>Std: {audioFeatures.focus_metric.std.toFixed(4)}</p>
+                            <p>Range: {audioFeatures.focus_metric.min.toFixed(4)} - {audioFeatures.focus_metric.max.toFixed(4)}</p>
+                            <p className="mt-2 text-xs">Instrumentalness × (1 - Speechiness).</p>
+                          </>
+                        ) : (
+                          <p>No data available {dataErrors.audio ? `(${dataErrors.audio})` : ''}</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="bg-card p-4 rounded-lg shadow-md">
+                      <h3 className="text-lg font-semibold mb-2 text-accent-purple">Duration Category</h3>
+                      <div className="text-sm text-light">
+                        {audioFeatures.duration_category && Object.keys(audioFeatures.duration_category).length > 0 ? (
+                          <ul className="list-disc ml-4">
+                            {Object.entries(audioFeatures.duration_category).map(([category, count]) => (
+                              <li key={category}>
+                                {category === '0' ? 'Short (<3 min)' : category === '1' ? 'Medium (3-5 min)' : 'Long (>5 min)'}: {count} tracks
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p>No data available {dataErrors.audio ? `(${dataErrors.audio})` : ''}</p>
+                        )}
+                        <p className="mt-2 text-xs">Songs categorized by duration.</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Feature Engineering: Time-Based Trends */}
+                <div className="mb-8">
+                  <h2 className="text-2xl font-semibold text-lighter mb-4">Time-Based Trends</h2>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="bg-card p-4 rounded-lg shadow-md">
+                      <h3 className="text-lg font-semibold mb-2 text-accent-teal">Days Since Release</h3>
+                      <div className="text-sm text-light">
+                        {timeTrends.days_since_release && Object.keys(timeTrends.days_since_release).length > 0 ? (
+                          <>
+                            <p>Mean: {timeTrends.days_since_release.mean.toFixed(1)} days</p>
+                            <p>Std: {timeTrends.days_since_release.std.toFixed(1)} days</p>
+                            <p>Range: {timeTrends.days_since_release.min} - {timeTrends.days_since_release.max} days</p>
+                            <p className="mt-2 text-xs">Time between album release and snapshot date.</p>
+                          </>
+                        ) : (
+                          <p>No data available {dataErrors.time ? `(${dataErrors.time})` : ''}</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="bg-card p-4 rounded-lg shadow-md">
+                      <h3 className="text-lg font-semibold mb-2 text-accent-blue">Age Category</h3>
+                      <div className="text-sm text-light">
+                        {timeTrends.age_category && Object.keys(timeTrends.age_category).length > 0 ? (
+                          <ul className="list-disc ml-4">
+                            {Object.entries(timeTrends.age_category).map(([category, count]) => (
+                              <li key={category}>
+                                {category === '0' ? 'New (<30 days)' : category === '1' ? 'Recent (30 days-5 years)' : 'Old (>5 years)'}: {count} tracks
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p>No data available {dataErrors.time ? `(${dataErrors.time})` : ''}</p>
+                        )}
+                        <p className="mt-2 text-xs">Songs categorized by release age.</p>
+                      </div>
+                    </div>
+                    <div className="bg-card p-4 rounded-lg shadow-md">
+                      <h3 className="text-lg font-semibold mb-2 text-accent-purple">Season Released</h3>
+                      <div className="text-sm text-light">
+                        {timeTrends.season_released && Object.keys(timeTrends.season_released).length > 0 ? (
+                          <ul className="list-disc ml-4">
+                            {Object.entries(timeTrends.season_released).map(([season, count]) => (
+                              <li key={season}>{season}: {count} tracks</li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p>No data available {dataErrors.time ? `(${dataErrors.time})` : ''}</p>
+                        )}
+                        <p className="mt-2 text-xs">Season of album release (Winter, Spring, Summer, Fall).</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Classification Metrics */}
+                <div className="mb-8">
+                  <h2 className="text-2xl font-semibold text-lighter mb-4">Classification Performance</h2>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {classificationData.length > 0 ? classificationData.map((model, index) => (
+                      <div key={index} className="bg-card p-4 rounded-lg shadow-md">
+                        <h3 className="text-lg font-semibold mb-2 text-accent-blue">{model.Model}</h3>
+                        <div className="space-y-2">
+                          <div>
+                            <span className="text-sm text-light">Accuracy: </span>
+                            <span className="text-lighter font-medium">{model.Accuracy.toFixed(3)}</span>
+                          </div>
+                          <div>
+                            <span className="text-sm text-light">Precision: </span>
+                            <span className="text-lighter font-medium">{model.Precision.toFixed(3)}</span>
+                          </div>
+                          <div>
+                            <span className="text-sm text-light">Recall: </span>
+                            <span className="text-lighter font-medium">{model.Recall.toFixed(3)}</span>
+                          </div>
+                          <div>
+                            <span className="text-sm text-light">F1 Score: </span>
+                            <span className="text-lighter font-medium">{model["F1 Score"].toFixed(3)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )) : (
+                      <p className="text-sm text-light">No classification data available {dataErrors.classification ? `(${dataErrors.classification})` : ''}</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Clustering Metrics */}
+                <div className="mb-8">
+                  <h2 className="text-2xl font-semibold text-lighter mb-4">Clustering Performance</h2>
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    {Object.keys(clusteringData).length > 0 ? Object.entries(clusteringData).map(([key, value], index) => (
+                      <div key={key} className="bg-card p-4 rounded-lg shadow-md">
+                        <h3 className="text-lg font-semibold text-accent-teal">{key.replace(/_/g, ' ')}</h3>
+                        <p className="text-2xl text-lighter font-medium">
+                          {typeof value === "number" ? value.toFixed(3) : value}
+                        </p>
+                      </div>
+                    )) : (
+                      <p className="text-sm text-light">No clustering data available {dataErrors.clustering ? `(${dataErrors.clustering})` : ''}</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Unsupervised Learning: Anomaly Detection */}
+                <div className="mb-8">
+                  <h2 className="text-2xl font-semibold text-lighter mb-4">Anomaly Detection</h2>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-card p-4 rounded-lg shadow-md">
+                      <h3 className="text-lg font-semibold mb-2 text-accent-orange">Outlier Summary</h3>
+                      <div className="text-sm text-light">
+                        {anomalyData.num_outliers !== undefined ? (
+                          <>
+                            <p>Number of Outliers: {anomalyData.num_outliers}</p>
+                            <p>Mean Popularity: {anomalyData.outlier_characteristics?.mean_popularity?.toFixed(2) || 'N/A'}</p>
+                            <p>Mean Energy: {anomalyData.outlier_characteristics?.mean_energy?.toFixed(2) || 'N/A'}</p>
+                            <p>Mean Danceability: {anomalyData.outlier_characteristics?.mean_danceability?.toFixed(2) || 'N/A'}</p>
+                            <p className="mt-2 text-xs">Outliers identified using Isolation Forest (5% contamination).</p>
+                          </>
+                        ) : (
+                          <p>No data available {dataErrors.anomaly ? `(${dataErrors.anomaly})` : ''}</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="bg-card p-4 rounded-lg shadow-md">
+                      <h3 className="text-lg font-semibold mb-2 text-accent-purple">Sample Outliers</h3>
+                      <div className="max-h-64 overflow-y-auto bg-dark p-3 rounded">
+                        {anomalyData.sample_outliers?.length > 0 ? (
+                          <table className="min-w-full text-xs text-light">
+                            <thead>
+                              <tr>
+                                <th className="px-2 py-1 text-left">Song</th>
+                                <th className="px-2 py-1 text-left">Artist</th>
+                                <th className="px-2 py-1 text-left">Popularity</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {anomalyData.sample_outliers.map((song, index) => (
+                                <tr key={index} className="border-t border-dark">
+                                  <td className="px-2 py-1">{song.name || 'N/A'}</td>
+                                  <td className="px-2 py-1">{song.artists || 'N/A'}</td>
+                                  <td className="px-2 py-1">{song.popularity || 'N/A'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        ) : (
+                          <p className="text-light">No outliers available {dataErrors.anomaly ? `(${dataErrors.anomaly})` : ''}</p>
+                        )}
+                        <p className="mt-2 text-xs">Sample of up to 5 outlier tracks.</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Explainable AI: Counterfactual Explanations */}
+                <div className="mb-8">
+                  <h2 className="text-2xl font-semibold text-lighter mb-4">Explainable AI</h2>
+                  <div className="bg-card p-4 rounded-lg shadow-md">
+                    <h3 className="text-lg font-semibold mb-2 text-accent-blue">Counterfactual Explanations</h3>
+                    <div className="max-h-96 overflow-y-auto bg-dark p-3 rounded">
+                      {counterfactualExplanation.length > 0 ? (
+                        <table className="min-w-full text-xs text-light">
+                          <thead>
+                            <tr>
+                              <th className="px-2 py-1 text-left">Feature</th>
+                              <th className="px-2 py-1 text-left">Original</th>
+                              <th className="px-2 py-1 text-left">Counterfactual</th>
+                              <th className="px-2 py-1 text-left">Change</th>
+                              <th className="px-2 py-1 text-left">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {counterfactualExplanation.map((row, index) => (
+                              <tr key={index} className="border-t border-dark">
+                                <td className="px-2 py-1">{row.Feature || 'N/A'}</td>
+                                <td className="px-2 py-1">{parseFloat(row.Original || 0).toFixed(4)}</td>
+                                <td className="px-2 py-1">{parseFloat(row.Counterfactual || 0).toFixed(4)}</td>
+                                <td className="px-2 py-1">{parseFloat(row.Change || 0).toFixed(4)}</td>
+                                <td className="px-2 py-1">{row.Status || 'N/A'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ) : (
+                        <p className="text-light">
+                          {dataErrors.counterfactual 
+                            ? `No counterfactual explanations available (${dataErrors.counterfactual})`
+                            : 'No counterfactual changes found for the selected sample'}
+                        </p>
+                      )}
+                    </div>
+                    <p className="text-xs text-light mt-2">
+                      Feature changes needed to flip a song's predicted popularity (e.g., from low to high).
+                    </p>
+                  </div>
+                </div>
+
+                {/* Unsupervised Learning: Cluster-Driven Playlist Generator */}
+                {playlistData && (
+                  <div className="mb-8">
+                    <h2 className="text-2xl font-semibold text-lighter mb-4">Cluster-Based Playlists</h2>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {Object.entries(playlistData).map(([clusterId, playlist]) => (
+                        <div key={clusterId} className="bg-card p-4 rounded-lg shadow-md">
+                          <h3 className="text-lg font-semibold mb-2 text-accent-purple">{playlist.name}</h3>
+                          <p className="text-sm text-light mb-3">{playlist.description}</p>
+                          <div className="bg-dark p-3 rounded">
+                            <h4 className="text-sm font-medium text-accent-orange mb-1">Sample Tracks:</h4>
+                            <ul className="text-xs text-light">
+                              {playlist.songs.length > 0 ? (
+                                playlist.songs.map((song, i) => (
+                                  <li key={i} className="py-1 border-b border-dark last:border-0">{song}</li>
+                                ))
+                              ) : (
+                                <li className="py-1">No tracks available</li>
+                              )}
+                            </ul>
+                          </div>
+                          <p className="text-xs text-light mt-2">Songs grouped by audio similarity (K-Means clustering).</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Data Visualizations */}
+                <h2 className="text-2xl font-semibold text-lighter mb-4">Data Visualizations</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+                  <div className="graph-card">
+                    <GraphPlaceholder
+                      title="KNN Confusion Matrix"
+                      color="accent-blue"
+                      img_src="KNN_confusion_matrix.png"
+                      img_alt="KNN Confusion Matrix"
+                      if_onClick={() => openGraphInNewTab("KNN_confusion_matrix.png")}
+                      if_OnError={(e) => (e.target.src = "https://via.placeholder.com/300x200?text=KNN+Confusion+Matrix")}
+                      desc="Heatmap showing true positives, true negatives, false positives, and false negatives for KNN."
+                    />
+                  </div>
+                  <div className="graph-card">
+                    <GraphPlaceholder
+                      title="Naïve Bayes Confusion Matrix"
+                      color="accent-teal"
+                      img_src="Naïve Bayes_confusion_matrix.png"
+                      img_alt="Naïve Bayes Confusion Matrix"
+                      if_onClick={() => openGraphInNewTab("Naïve Bayes_confusion_matrix.png")}
+                      if_OnError={(e) => (e.target.src = "https://via.placeholder.com/300x200?text=Naïve+Bayes+Confusion+Matrix")}
+                      desc="Heatmap highlighting prediction accuracy across classes for Naïve Bayes."
+                    />
+                  </div>
+                  <div className="graph-card">
+                    <GraphPlaceholder
+                      title="Random Forest Confusion Matrix"
+                      color="accent-purple"
+                      img_src="Random Forest_confusion_matrix.png"
+                      img_alt="Random Forest Confusion Matrix"
+                      if_onClick={() => openGraphInNewTab("Random Forest_confusion_matrix.png")}
+                      if_OnError={(e) => (e.target.src = "https://via.placeholder.com/300x200?text=Random+Forest+Confusion+Matrix")}
+                      desc="Heatmap visualizing Random Forest's classification performance."
+                    />
+                  </div>
+                  <div className="graph-card">
+                    <GraphPlaceholder
+                      title="Feature Importance"
+                      color="accent-orange"
+                      img_src="feature_importance.png"
+                      img_alt="Feature Importance"
+                      if_onClick={() => openGraphInNewTab("feature_importance.png")}
+                      if_OnError={(e) => (e.target.src = "https://via.placeholder.com/300x200?text=Feature+Importance")}
+                      desc="Bar chart of top 10 features influencing Random Forest predictions."
+                    />
+                  </div>
+                  <div className="graph-card">
+                    <GraphPlaceholder
+                      title="Clustering Analysis"
+                      color="accent-blue"
+                      img_src="advanced_clustering_analysis.png"
+                      img_alt="Clustering Analysis"
+                      if_onClick={() => openGraphInNewTab("advanced_clustering_analysis.png")}
+                      if_OnError={(e) => (e.target.src = "https://via.placeholder.com/300x200?text=Clustering+Analysis")}
+                      desc="PCA plot of K-Means clusters with representative songs and anomaly detection."
+                    />
+                  </div>
+                  <div className="graph-card">
+                    <GraphPlaceholder
+                      title="Seasonal Trends"
+                      color="accent-purple"
+                      img_src="seasonal_trends.png"
+                      img_alt="Seasonal Trends"
+                      if_onClick={() => openGraphInNewTab("seasonal_trends.png")}
+                      if_OnError={(e) => (e.target.src = "https://via.placeholder.com/300x200?text=Seasonal+Trends")}
+                      desc="Boxplot of song popularity by release season."
+                    />
+                  </div>
+                </div>
+
+                {/* Footer Section for Algorithm Comparison and Improvements */}
+                <footer className="footer">
+                  <h2 className="text-2xl font-semibold text-lighter mb-4">Algorithm Comparison and Selection</h2>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+                    <div className="bg-card p-4 rounded-lg shadow-md border-2 border-accent-teal">
+                      <h3 className="text-lg font-semibold mb-2 text-accent-teal">Comparison of Algorithms</h3>
+                      <div className="text-sm text-light">
+                        <ul className="list-disc ml-4">
+                          <li><strong>KNN:</strong> Performs well with local patterns but struggles with high-dimensional data and requires significant computational resources for large datasets, yielding moderate F1 scores (e.g., ~0.75).</li>
+                          <li><strong>Naïve Bayes:</strong> Assumes feature independence, which may not hold for correlated audio features, resulting in lower F1 scores (~0.65) but offering fast training times.</li>
+                          <li><strong>Random Forest:</strong> Excels in capturing non-linear relationships and feature interactions, achieving the highest F1 scores (~0.85) and providing feature importance insights, though it is computationally intensive during training.</li>
+                          <li><strong>K-Means:</strong> Effectively groups songs by audio similarity with an optimal silhouette score, ideal for playlist generation.</li>
+                          <li><strong>Isolation Forest:</strong> Efficiently detects outliers (5% contamination) with robust performance on imbalanced data.</li>
+                        </ul>
+                      </div>
+                    </div>
+                    <div className="bg-card p-4 rounded-lg shadow-md border-2 border-accent-teal">
+                      <h3 className="text-lg font-semibold mb-2 text-accent-teal">Reason for Selection</h3>
+                      <div className="text-sm text-light">
+                        <ul className="list-disc ml-4">
+                          <li><strong>Random Forest:</strong> Selected for classification due to its superior F1 score, robustness to overfitting with hyperparameter tuning (e.g., max_depth, n_estimators), and ability to handle diverse, non-linear audio features (e.g., energy, danceability).</li>
+                          <li><strong>K-Means:</strong> Chosen for clustering for its simplicity and effectiveness in identifying natural groupings, validated by silhouette scores.</li>
+                          <li><strong>Isolation Forest:</strong> Preferred for anomaly detection due to its efficiency and suitability for high-dimensional datasets.</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mb-8">
+                    <GraphPlaceholder
+                      title="Algorithm Comparison"
+                      color="accent-teal"
+                      img_src="algorithm_comparison.png"
+                      img_alt="Algorithm Comparison"
+                      if_onClick={() => openGraphInNewTab("algorithm_comparison.png")}
+                      if_OnError={(e) => (e.target.src = "https://via.placeholder.com/300x200?text=Algorithm+Comparison")}
+                      desc="Bar chart comparing KNN, Naïve Bayes, and Random Forest performance across key metrics."
+                      isFooter={true}
+                    />
+                  </div>
+
+                  <h2 className="text-2xl font-semibold text-lighter mb-4">Efforts to Improve Results</h2>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-card p-4 rounded-lg shadow-md border-2 border-accent-blue">
+                      <h3 className="text-lg font-semibold mb-2 text-accent-blue">Improvement Strategies (1-3)</h3>
+                      <div className="text-sm text-light">
+                        <ul className="list-disc ml-4">
+                          <li><strong>Advanced Hyperparameter Tuning:</strong> Expand GridSearchCV to include a broader range of parameters (e.g., max_features, min_samples_split for Random Forest, and distance metrics for KNN) to optimize model performance.</li>
+                          <li><strong>Feature Engineering and Selection:</strong> Apply Recursive Feature Elimination (RFE) or Principal Component Analysis (PCA) to identify and retain the most impactful features, reducing noise and improving model accuracy.</li>
+                          <li><strong>Ensemble Techniques:</strong> Implement Gradient Boosting (e.g., XGBoost) or stacking with multiple models (e.g., combining Random Forest and Naïve Bayes) to leverage diverse strengths and boost F1 scores.</li>
+                        </ul>
+                      </div>
+                    </div>
+                    <div className="bg-card p-4 rounded-lg shadow-md border-2 border-accent-blue">
+                      <h3 className="text-lg font-semibold mb-2 text-accent-blue">Improvement Strategies (4-5)</h3>
+                      <div className="text-sm text-light">
+                        <ul className="list-disc ml-4">
+                          <li><strong>Data Augmentation:</strong> Increase dataset size by incorporating external sources (e.g., Spotify API for additional tracks) or synthetic data generation using SMOTE for imbalanced classes.</li>
+                          <li><strong>Model Evaluation Refinement:</strong> Use cross-validation with stratified sampling and additional metrics (e.g., ROC-AUC) to ensure robust performance across different data splits.</li>
+                        </ul>
+                        <p className="mt-2">These efforts will be prioritized based on initial model performance and resource availability.</p>
+                      </div>
+                    </div>
+                  </div>
+                </footer>
+              </>
+            ) : (
+              <div className="mb-8">
+                <h2 className="text-2xl font-semibold text-lighter mb-4">Data Explorer</h2>
+                <div className="mb-6">
+                  <form onSubmit={handleSearch} className="flex space-x-2">
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Search by song, artist, or feature..."
+                      className="search-bar px-4 py-2 rounded-lg w-full text-light placeholder-white focus:outline-none focus:ring-2 focus:ring-accent-blue"
+                    />
+                    <button
+                      type="submit"
+                      className="search-button px-4 py-2 rounded-lg hover:bg-accent-blue transition-colors"
+                    >
+                      Search
+                    </button>
+                  </form>
+                </div>
+                <div className="bg-card p-4 rounded-lg shadow-md overflow-x-auto">
+                  <table className="min-w-full text-sm text-light">
+                    <thead>
+                      <tr>
+                        {dataset.length > 0 && Object.keys(dataset[0]).map((key) => (
+                          <th key={key} className="px-4 py-2 text-left font-semibold">
+                            {key.replace(/_/g, ' ')}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredDataset.slice(0, itemsPerPage).map((row, index) => (
+                        <tr key={index} className="border-t border-dark">
+                          {Object.values(row).map((value, i) => (
+                            <td key={i} className="px-4 py-2">
+                              {typeof value === 'number' && !Number.isInteger(value) ? value.toFixed(2) : value}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {filteredDataset.length > itemsPerPage && (
+                    <div className="mt-4 text-center">
+                      <button
+                        onClick={handleLoadMore}
+                        className="px-4 py-2 bg-accent-blue text-white rounded-lg hover:bg-accent-teal transition-colors"
+                      >
+                        Load More
+                      </button>
+                    </div>
+                  )}
+                  {filteredDataset.length === 0 && (
+                    <p className="text-light text-center py-4">No results found.</p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'93a5f6a53becb01c',t:'MTc0NjM0MDM3My4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>
